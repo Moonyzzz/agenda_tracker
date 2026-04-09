@@ -1,32 +1,3 @@
--- Helper functions
-
-CREATE OR REPLACE FUNCTION is_planner_member(planner_id uuid)
-RETURNS bool
-LANGUAGE sql
-SECURITY DEFINER
-STABLE
-AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM planner_members
-    WHERE planner_members.planner_id = $1
-      AND planner_members.user_id = auth.uid()
-  );
-$$;
-
-CREATE OR REPLACE FUNCTION is_planner_editor_or_owner(planner_id uuid)
-RETURNS bool
-LANGUAGE sql
-SECURITY DEFINER
-STABLE
-AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM planner_members
-    WHERE planner_members.planner_id = $1
-      AND planner_members.user_id = auth.uid()
-      AND planner_members.role IN ('editor', 'owner')
-  );
-$$;
-
 -- Tables
 
 CREATE TABLE planners (
@@ -110,14 +81,81 @@ CREATE TABLE suggestion_votes (
   UNIQUE (suggestion_id, user_id)
 );
 
+-- Indexes on FK columns
+
+CREATE INDEX ON planner_members (planner_id);
+CREATE INDEX ON planner_members (user_id);
+CREATE INDEX ON events (planner_id);
+CREATE INDEX ON events (created_by);
+CREATE INDEX ON polls (planner_id);
+CREATE INDEX ON polls (created_by);
+CREATE INDEX ON poll_votes (poll_id);
+CREATE INDEX ON poll_votes (user_id);
+CREATE INDEX ON poll_suggestions (poll_id);
+CREATE INDEX ON poll_suggestions (suggested_by);
+CREATE INDEX ON suggestion_votes (suggestion_id);
+CREATE INDEX ON suggestion_votes (user_id);
+-- For cron expiry queries
+CREATE INDEX ON polls (status, expires_at);
+
+-- Helper functions (defined after tables they reference)
+
+CREATE OR REPLACE FUNCTION is_planner_member(planner_id uuid)
+RETURNS bool
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = ''
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.planner_members
+    WHERE public.planner_members.planner_id = $1
+      AND public.planner_members.user_id = auth.uid()
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION is_planner_editor_or_owner(planner_id uuid)
+RETURNS bool
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = ''
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.planner_members
+    WHERE public.planner_members.planner_id = $1
+      AND public.planner_members.user_id = auth.uid()
+      AND public.planner_members.role IN ('editor', 'owner')
+  );
+$$;
+
+-- Fix 3: SECURITY DEFINER owner check to avoid RLS recursion on planner_members
+
+CREATE OR REPLACE FUNCTION is_planner_owner(planner_id uuid)
+RETURNS bool
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = ''
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.planner_members
+    WHERE public.planner_members.planner_id = $1
+      AND public.planner_members.user_id = auth.uid()
+      AND public.planner_members.role = 'owner'
+  );
+$$;
+
 -- Trigger: auto-update events.updated_at
 
 CREATE OR REPLACE FUNCTION update_updated_at()
-RETURNS trigger
+RETURNS TRIGGER
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
 AS $$
 BEGIN
-  NEW.updated_at = now();
+  NEW.updated_at = pg_catalog.now();
   RETURN NEW;
 END;
 $$;
@@ -142,17 +180,27 @@ CREATE POLICY "planners_select" ON planners
   FOR SELECT
   USING (is_planner_member(id));
 
+-- Fix 5: enforce owner_id = auth.uid() on insert
 CREATE POLICY "planners_insert" ON planners
   FOR INSERT
-  WITH CHECK (auth.uid() IS NOT NULL);
+  WITH CHECK (auth.uid() IS NOT NULL AND owner_id = auth.uid());
 
+-- Fix 2: editors and owners may update
 CREATE POLICY "planners_update" ON planners
   FOR UPDATE
-  USING (is_planner_member(id));
+  USING (is_planner_editor_or_owner(id));
 
+-- Fix 2: only the owner may delete
 CREATE POLICY "planners_delete" ON planners
   FOR DELETE
-  USING (is_planner_member(id));
+  USING (
+    EXISTS (
+      SELECT 1 FROM planner_members
+      WHERE planner_id = planners.id
+        AND user_id = auth.uid()
+        AND role = 'owner'
+    )
+  );
 
 -- RLS policies: planner_members
 
@@ -160,27 +208,15 @@ CREATE POLICY "planner_members_select" ON planner_members
   FOR SELECT
   USING (is_planner_member(planner_id));
 
+-- Fix 3: use SECURITY DEFINER function to avoid RLS recursion
 CREATE POLICY "planner_members_insert" ON planner_members
   FOR INSERT
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM planner_members pm
-      WHERE pm.planner_id = planner_members.planner_id
-        AND pm.user_id = auth.uid()
-        AND pm.role = 'owner'
-    )
-  );
+  WITH CHECK (is_planner_owner(planner_id));
 
+-- Fix 3: use SECURITY DEFINER function to avoid RLS recursion
 CREATE POLICY "planner_members_delete" ON planner_members
   FOR DELETE
-  USING (
-    EXISTS (
-      SELECT 1 FROM planner_members pm
-      WHERE pm.planner_id = planner_members.planner_id
-        AND pm.user_id = auth.uid()
-        AND pm.role = 'owner'
-    )
-  );
+  USING (is_planner_owner(planner_id));
 
 -- RLS policies: events
 
@@ -264,10 +300,12 @@ CREATE POLICY "poll_suggestions_select" ON poll_suggestions
     )
   );
 
+-- Fix 6: bind suggested_by = auth.uid() on insert
 CREATE POLICY "poll_suggestions_insert" ON poll_suggestions
   FOR INSERT
   WITH CHECK (
-    EXISTS (
+    suggested_by = auth.uid()
+    AND EXISTS (
       SELECT 1 FROM polls p
       WHERE p.id = poll_suggestions.poll_id
         AND is_planner_editor_or_owner(p.planner_id)
