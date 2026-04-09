@@ -85,6 +85,7 @@ CREATE TABLE suggestion_votes (
 
 CREATE INDEX ON planner_members (planner_id);
 CREATE INDEX ON planner_members (user_id);
+CREATE INDEX ON planner_members (invited_by);
 CREATE INDEX ON events (planner_id);
 CREATE INDEX ON events (created_by);
 CREATE INDEX ON polls (planner_id);
@@ -193,14 +194,7 @@ CREATE POLICY "planners_update" ON planners
 -- Fix 2: only the owner may delete
 CREATE POLICY "planners_delete" ON planners
   FOR DELETE
-  USING (
-    EXISTS (
-      SELECT 1 FROM planner_members
-      WHERE planner_id = planners.id
-        AND user_id = auth.uid()
-        AND role = 'owner'
-    )
-  );
+  USING (is_planner_owner(id));
 
 -- RLS policies: planner_members
 
