@@ -54,7 +54,7 @@ export default function EventForm({
   }
 
   return (
-    <form action={action} encType="multipart/form-data" className="space-y-6">
+    <form action={action} className="space-y-6">
       <input type="hidden" name="planner_id" value={plannerId} />
       {eventId && <input type="hidden" name="event_id" value={eventId} />}
 
