@@ -4,7 +4,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 const PROTECTED = ['/dashboard', '/planners']
 const AUTH_PAGES = ['/auth', '/']
 
-export async function proxy(request: NextRequest) {
+export default async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request })
 
   const supabase = createServerClient(
