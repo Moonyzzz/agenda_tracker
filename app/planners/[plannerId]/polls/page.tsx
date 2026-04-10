@@ -87,7 +87,7 @@ export default async function PollsPage({ params }: Props) {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-medium text-stone-900">{String(ed.name ?? 'Untitled')}</p>
-                      {ed.start_time && (
+                      {ed.start_time != null && (
                         <p className="mt-0.5 text-xs text-stone-500">
                           {new Date(String(ed.start_time)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
                         </p>

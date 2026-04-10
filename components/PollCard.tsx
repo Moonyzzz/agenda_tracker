@@ -100,17 +100,17 @@ export default function PollCard({ poll: initial, userId, userRole }: Props) {
       {/* Proposed event */}
       <div className="rounded-xl border border-stone-200 bg-white p-4 space-y-2 text-sm">
         <h3 className="font-semibold text-stone-900">{String(ed.name ?? '')}</h3>
-        {ed.description && <p className="text-stone-600">{String(ed.description)}</p>}
-        {ed.start_time && (
+        {ed.description != null && <p className="text-stone-600">{String(ed.description)}</p>}
+        {ed.start_time != null && (
           <p className="text-stone-500">
             {new Date(String(ed.start_time)).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
-            {ed.end_time && ` – ${new Date(String(ed.end_time)).toLocaleString(undefined, { timeStyle: 'short' })}`}
+            {ed.end_time != null && ` – ${new Date(String(ed.end_time)).toLocaleString(undefined, { timeStyle: 'short' })}`}
           </p>
         )}
         {Array.isArray(ed.participants) && ed.participants.length > 0 && (
           <p className="text-stone-500">Participants: {(ed.participants as string[]).join(', ')}</p>
         )}
-        {ed.agenda && <p className="text-stone-500 whitespace-pre-wrap">{String(ed.agenda)}</p>}
+        {ed.agenda != null && <p className="text-stone-500 whitespace-pre-wrap">{String(ed.agenda)}</p>}
       </div>
 
       {/* Vote counts */}
