@@ -17,7 +17,9 @@ export async function createPlanner(formData: FormData) {
     redirect('/planners/new?error=Name+is+required')
   }
 
-  // Insert planner
+  // Insert planner — RLS insert policy: owner_id = auth.uid()
+  // SELECT policy now also allows owner_id = auth.uid() (migration 0003),
+  // so INSERT RETURNING succeeds without a pre-existing membership row.
   const { data: planner, error: plannerError } = await supabase
     .from('planners')
     .insert({
@@ -33,7 +35,8 @@ export async function createPlanner(formData: FormData) {
     redirect(`/planners/new?error=${encodeURIComponent(plannerError?.message || 'Failed to create planner')}`)
   }
 
-  // Add owner as planner_member
+  // Add owner as planner_member — RLS insert policy (migration 0003) allows
+  // this when role = 'owner' and planners.owner_id = auth.uid().
   const { error: memberError } = await supabase
     .from('planner_members')
     .insert({

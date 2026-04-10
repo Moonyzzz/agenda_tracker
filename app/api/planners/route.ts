@@ -74,6 +74,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Name is required' }, { status: 400 })
   }
 
+  // INSERT RETURNING works because migration 0003 added owner_id = auth.uid()
+  // to planners_select, and the bootstrap clause to planner_members_insert.
   const { data: planner, error: plannerError } = await supabase
     .from('planners')
     .insert({
