@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createServerClient } from '@/lib/supabase/server'
-import CalendarView, { type CalendarEvent } from '@/components/CalendarView'
+import CalendarWrapper from '@/components/CalendarWrapper'
+import type { CalendarEvent } from '@/components/CalendarView'
 import { RRule } from 'rrule'
 
 interface Props {
@@ -142,7 +143,7 @@ export default async function PlannerPage({ params }: Props) {
       {/* Calendar */}
       <main className="mx-auto max-w-5xl px-4 py-6">
         <div className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
-          <CalendarView
+          <CalendarWrapper
             plannerId={plannerId}
             events={calendarEvents}
             dayColor={planner.day_color}
