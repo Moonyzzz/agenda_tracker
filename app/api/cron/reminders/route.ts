@@ -48,14 +48,15 @@ export async function GET(req: Request) {
     }
   }
 
-  // Custom reminders: reminder_enabled events where reminder_email set, starting soon
-  // (simplified: send if event starts within the next hour and reminder not yet sent)
+  // Custom reminders: reminder_enabled events starting within the next hour.
+  // Note: confirmation_sent is intentionally NOT checked here — it belongs to the
+  // 24h confirmation flow only. The 1-hour window + daily cron cadence prevents
+  // duplicate sends without needing a separate flag.
   const in1h = new Date(now.getTime() + 60 * 60 * 1000).toISOString()
   const { data: reminderEvents } = await supabase
     .from('events')
     .select('id, name, start_time, reminder_email')
     .eq('reminder_enabled', true)
-    .eq('confirmation_sent', false)
     .gte('start_time', now.toISOString())
     .lte('start_time', in1h)
     .not('reminder_email', 'is', null)

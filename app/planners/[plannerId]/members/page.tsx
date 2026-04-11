@@ -1,7 +1,16 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createServerClient } from '@/lib/supabase/server'
-import { inviteMember, removeMember } from '@/app/members/actions'
+import { createClient } from '@supabase/supabase-js'
+import { inviteMember, removeMember, changeRole } from '@/app/members/actions'
+
+function serviceRoleClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  )
+}
 
 interface Props {
   params: Promise<{ plannerId: string }>
@@ -33,13 +42,19 @@ export default async function MembersPage({ params, searchParams }: Props) {
     .eq('id', plannerId)
     .single()
 
-  // Fetch all members with user emails via auth.users (need service role for emails)
-  // We'll just show user_id and role — emails require service role lookup
   const { data: members } = await supabase
     .from('planner_members')
     .select('id, user_id, role, joined_at')
     .eq('planner_id', plannerId)
     .order('joined_at', { ascending: true })
+
+  // Fetch emails from auth.users using service role
+  const admin = serviceRoleClient()
+  const emailMap = new Map<string, string>()
+  for (const m of members ?? []) {
+    const { data: { user: authUser } } = await admin.auth.admin.getUserById(m.user_id)
+    if (authUser?.email) emailMap.set(authUser.id, authUser.email)
+  }
 
   // Fetch pending invites (owners only)
   const { data: invites } = isOwner
@@ -78,24 +93,47 @@ export default async function MembersPage({ params, searchParams }: Props) {
               <div key={m.id} className="flex items-center justify-between px-4 py-3">
                 <div>
                   <p className="text-sm font-medium text-stone-900">
-                    {m.user_id === user.id ? 'You' : m.user_id.slice(0, 8) + '…'}
+                    {emailMap.get(m.user_id) ?? m.user_id.slice(0, 8) + '…'}
+                    {m.user_id === user.id && (
+                      <span className="ml-2 text-xs font-normal text-stone-400">(you)</span>
+                    )}
                   </p>
                   <p className="text-xs text-stone-500 capitalize">{m.role}</p>
                 </div>
-                {isOwner && m.user_id !== user.id && (
-                  <form action={removeMember}>
-                    <input type="hidden" name="planner_id" value={plannerId} />
-                    <input type="hidden" name="user_id" value={m.user_id} />
-                    <button
-                      type="submit"
-                      className="text-xs text-red-500 hover:text-red-700 transition-colors"
-                      onClick={(e) => {
-                        if (!confirm('Remove this member?')) e.preventDefault()
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </form>
+                {isOwner && m.user_id !== user.id && m.role !== 'owner' && (
+                  <div className="flex items-center gap-3">
+                    <form action={changeRole} className="flex items-center gap-1.5">
+                      <input type="hidden" name="planner_id" value={plannerId} />
+                      <input type="hidden" name="user_id" value={m.user_id} />
+                      <select
+                        name="role"
+                        defaultValue={m.role}
+                        className="rounded border border-stone-200 bg-white px-2 py-1 text-xs text-stone-700 focus:outline-none focus:ring-1 focus:ring-stone-400"
+                      >
+                        <option value="editor">Editor</option>
+                        <option value="observer">Observer</option>
+                      </select>
+                      <button
+                        type="submit"
+                        className="text-xs text-stone-500 hover:text-stone-800 transition-colors"
+                      >
+                        Save
+                      </button>
+                    </form>
+                    <form action={removeMember}>
+                      <input type="hidden" name="planner_id" value={plannerId} />
+                      <input type="hidden" name="user_id" value={m.user_id} />
+                      <button
+                        type="submit"
+                        className="text-xs text-red-500 hover:text-red-700 transition-colors"
+                        onClick={(e) => {
+                          if (!confirm('Remove this member?')) e.preventDefault()
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </form>
+                  </div>
                 )}
               </div>
             ))}

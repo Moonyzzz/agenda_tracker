@@ -74,6 +74,47 @@ export async function inviteMember(formData: FormData) {
   redirect(`/planners/${plannerId}/members?success=Invite+sent+to+${encodeURIComponent(email)}`)
 }
 
+export async function changeRole(formData: FormData) {
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/auth/login')
+
+  const plannerId = formData.get('planner_id') as string
+  const targetUserId = formData.get('user_id') as string
+  const newRole = formData.get('role') as string
+
+  if (!['editor', 'observer'].includes(newRole)) {
+    redirect(`/planners/${plannerId}/members?error=Invalid+role`)
+  }
+
+  const { data: membership } = await supabase
+    .from('planner_members')
+    .select('role')
+    .eq('planner_id', plannerId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!membership || membership.role !== 'owner') {
+    redirect(`/planners/${plannerId}/members?error=Only+owners+can+change+roles`)
+  }
+
+  if (targetUserId === user.id) {
+    redirect(`/planners/${plannerId}/members?error=Cannot+change+your+own+role`)
+  }
+
+  const { error } = await supabase
+    .from('planner_members')
+    .update({ role: newRole })
+    .eq('planner_id', plannerId)
+    .eq('user_id', targetUserId)
+
+  if (error) {
+    redirect(`/planners/${plannerId}/members?error=${encodeURIComponent(error.message)}`)
+  }
+
+  redirect(`/planners/${plannerId}/members?success=Role+updated`)
+}
+
 export async function removeMember(formData: FormData) {
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()

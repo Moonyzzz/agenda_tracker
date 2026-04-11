@@ -3,47 +3,10 @@ import Link from 'next/link'
 import { createServerClient } from '@/lib/supabase/server'
 import CalendarWrapper from '@/components/CalendarWrapper'
 import type { CalendarEvent } from '@/components/CalendarView'
-import { RRule } from 'rrule'
+import { buildRRule, type EventRow } from '@/lib/recurrence'
 
 interface Props {
   params: Promise<{ plannerId: string }>
-}
-
-type EventRow = {
-  id: string
-  name: string
-  start_time: string
-  end_time: string | null
-  recurrence_type: string | null
-  recurrence_interval: number | null
-  recurrence_end_date: string | null
-}
-
-function buildRRule(event: EventRow): string | undefined {
-  const { recurrence_type, recurrence_interval, recurrence_end_date } = event
-  if (!recurrence_type || recurrence_type === 'none') return undefined
-
-  const freqMap: Record<string, number> = {
-    daily: RRule.DAILY,
-    weekly: RRule.WEEKLY,
-    monthly: RRule.MONTHLY,
-    custom: RRule.DAILY,
-  }
-
-  const freq = freqMap[recurrence_type]
-  if (freq === undefined) return undefined
-
-  const options: ConstructorParameters<typeof RRule>[0] = {
-    freq,
-    interval: recurrence_interval ?? 1,
-    dtstart: new Date(event.start_time),
-  }
-
-  if (recurrence_end_date) {
-    options.until = new Date(recurrence_end_date)
-  }
-
-  return new RRule(options).toString()
 }
 
 export default async function PlannerPage({ params }: Props) {
@@ -129,6 +92,12 @@ export default async function PlannerPage({ params }: Props) {
               className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
             >
               Polls
+            </Link>
+            <Link
+              href={`/planners/${plannerId}/members`}
+              className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
+            >
+              Members
             </Link>
             <Link
               href={`/planners/${plannerId}/settings`}

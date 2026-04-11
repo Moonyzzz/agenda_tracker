@@ -1,5 +1,9 @@
 const RESEND_API_URL = 'https://api.resend.com/emails'
 
+// Set RESEND_FROM_EMAIL in your environment to a Resend-verified address.
+// Falls back to Resend's shared sandbox sender which works without domain verification.
+const DEFAULT_FROM = 'Agenda Tracker <onboarding@resend.dev>'
+
 interface SendEmailOptions {
   to: string
   subject: string
@@ -9,9 +13,11 @@ interface SendEmailOptions {
 export async function sendEmail({ to, subject, html }: SendEmailOptions): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
-    console.warn('RESEND_API_KEY not set — skipping email send')
+    console.warn('[email] RESEND_API_KEY not set — skipping email send')
     return false
   }
+
+  const from = process.env.RESEND_FROM_EMAIL ?? DEFAULT_FROM
 
   const res = await fetch(RESEND_API_URL, {
     method: 'POST',
@@ -19,13 +25,13 @@ export async function sendEmail({ to, subject, html }: SendEmailOptions): Promis
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      from: 'Agenda Tracker <noreply@agendatracker.app>',
-      to,
-      subject,
-      html,
-    }),
+    body: JSON.stringify({ from, to, subject, html }),
   })
+
+  if (!res.ok) {
+    const body = await res.text()
+    console.error(`[email] Resend error ${res.status}: ${body}`)
+  }
 
   return res.ok
 }
