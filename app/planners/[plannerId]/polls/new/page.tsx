@@ -79,8 +79,10 @@ export default async function NewPollPage({ params, searchParams }: Props) {
                 className="mt-1 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-stone-900 focus:border-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-500" />
             </div>
             <div>
-              <label htmlFor="end_time" className="block text-sm font-medium text-stone-700">End</label>
-              <input id="end_time" name="end_time" type="datetime-local"
+              <label htmlFor="end_time" className="block text-sm font-medium text-stone-700">
+                End <span className="text-red-500">*</span>
+              </label>
+              <input id="end_time" name="end_time" type="datetime-local" required
                 className="mt-1 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-stone-900 focus:border-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-500" />
             </div>
           </div>

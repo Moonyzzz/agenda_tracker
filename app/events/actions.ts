@@ -2,13 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase/server'
-
-function parseParticipants(raw: string): string[] {
-  return raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-}
+import { parseEventFormData } from '@/lib/events'
 
 async function uploadImage(
   supabase: Awaited<ReturnType<typeof createServerClient>>,
@@ -35,39 +29,39 @@ export async function createEvent(formData: FormData) {
   if (!user) redirect('/auth/login')
 
   const plannerId = formData.get('planner_id') as string
-  const name = (formData.get('name') as string)?.trim()
-
-  if (!name) redirect(`/planners/${plannerId}/events/new?error=Name+is+required`)
+  const parsed = parseEventFormData(formData)
+  if ('error' in parsed) {
+    redirect(`/planners/${plannerId}/events/new?error=${encodeURIComponent(parsed.error)}`)
+  }
 
   // Image upload
   const imageFile = formData.get('image') as File | null
   let imageUrl: string | null = null
   if (imageFile && imageFile.size > 0) {
     imageUrl = await uploadImage(supabase, imageFile, plannerId)
+    if (!imageUrl) {
+      redirect(`/planners/${plannerId}/events/new?error=${encodeURIComponent('Image upload failed')}`)
+    }
   }
-
-  const reminderEnabled = formData.get('reminder_enabled') === 'on'
 
   const { data: event, error } = await supabase
     .from('events')
     .insert({
       planner_id: plannerId,
       created_by: user.id,
-      name,
-      description: (formData.get('description') as string) || null,
+      name: parsed.name,
+      description: parsed.description,
       image_url: imageUrl,
-      start_time: formData.get('start_time') as string,
-      end_time: (formData.get('end_time') as string) || null,
-      participants: parseParticipants(formData.get('participants') as string ?? ''),
-      agenda: (formData.get('agenda') as string) || null,
-      notes: (formData.get('notes') as string) || null,
-      recurrence_type: (formData.get('recurrence_type') as string) || 'none',
-      recurrence_interval: formData.get('recurrence_interval')
-        ? Number(formData.get('recurrence_interval'))
-        : null,
-      recurrence_end_date: (formData.get('recurrence_end_date') as string) || null,
-      reminder_enabled: reminderEnabled,
-      reminder_email: reminderEnabled ? (formData.get('reminder_email') as string) || null : null,
+      start_time: parsed.startTime,
+      end_time: parsed.endTime,
+      participants: parsed.participants,
+      agenda: parsed.agenda,
+      notes: parsed.notes,
+      recurrence_type: parsed.recurrenceType,
+      recurrence_interval: parsed.recurrenceInterval,
+      recurrence_end_date: parsed.recurrenceEndDate,
+      reminder_enabled: parsed.reminderEnabled,
+      reminder_email: parsed.reminderEmail,
     })
     .select('id')
     .single()
@@ -86,34 +80,35 @@ export async function updateEvent(formData: FormData) {
 
   const eventId = formData.get('event_id') as string
   const plannerId = formData.get('planner_id') as string
-  const name = (formData.get('name') as string)?.trim()
-
-  if (!name) redirect(`/planners/${plannerId}/events/${eventId}/edit?error=Name+is+required`)
+  const next = formData.get('next') as string | null
+  const parsed = parseEventFormData(formData)
+  if ('error' in parsed) {
+    redirect(`/planners/${plannerId}/events/${eventId}/edit?error=${encodeURIComponent(parsed.error)}`)
+  }
 
   // Optional new image
   const imageFile = formData.get('image') as File | null
   let imageUrl: string | undefined
   if (imageFile && imageFile.size > 0) {
     imageUrl = (await uploadImage(supabase, imageFile, plannerId)) ?? undefined
+    if (!imageUrl) {
+      redirect(`/planners/${plannerId}/events/${eventId}/edit?error=${encodeURIComponent('Image upload failed')}`)
+    }
   }
 
-  const reminderEnabled = formData.get('reminder_enabled') === 'on'
-
   const updates: Record<string, unknown> = {
-    name,
-    description: (formData.get('description') as string) || null,
-    start_time: formData.get('start_time') as string,
-    end_time: (formData.get('end_time') as string) || null,
-    participants: parseParticipants(formData.get('participants') as string ?? ''),
-    agenda: (formData.get('agenda') as string) || null,
-    notes: (formData.get('notes') as string) || null,
-    recurrence_type: (formData.get('recurrence_type') as string) || 'none',
-    recurrence_interval: formData.get('recurrence_interval')
-      ? Number(formData.get('recurrence_interval'))
-      : null,
-    recurrence_end_date: (formData.get('recurrence_end_date') as string) || null,
-    reminder_enabled: reminderEnabled,
-    reminder_email: reminderEnabled ? (formData.get('reminder_email') as string) || null : null,
+    name: parsed.name,
+    description: parsed.description,
+    start_time: parsed.startTime,
+    end_time: parsed.endTime,
+    participants: parsed.participants,
+    agenda: parsed.agenda,
+    notes: parsed.notes,
+    recurrence_type: parsed.recurrenceType,
+    recurrence_interval: parsed.recurrenceInterval,
+    recurrence_end_date: parsed.recurrenceEndDate,
+    reminder_enabled: parsed.reminderEnabled,
+    reminder_email: parsed.reminderEmail,
   }
 
   if (imageUrl) updates.image_url = imageUrl
@@ -127,7 +122,7 @@ export async function updateEvent(formData: FormData) {
     redirect(`/planners/${plannerId}/events/${eventId}/edit?error=${encodeURIComponent(error.message)}`)
   }
 
-  redirect(`/planners/${plannerId}/events/${eventId}`)
+  redirect(next || `/planners/${plannerId}/events/${eventId}`)
 }
 
 export async function deleteEvent(formData: FormData) {
@@ -148,4 +143,37 @@ export async function deleteEvent(formData: FormData) {
   }
 
   redirect(`/planners/${plannerId}`)
+}
+
+export async function acknowledgeEventAction(formData: FormData) {
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/auth/login')
+
+  const eventId = formData.get('event_id') as string
+  const plannerId = formData.get('planner_id') as string
+  const next = formData.get('next') as string | null
+
+  const { data: membership } = await supabase
+    .from('planner_members')
+    .select('id')
+    .eq('planner_id', plannerId)
+    .eq('user_id', user.id)
+    .single()
+
+  if (!membership) {
+    redirect('/dashboard?error=You+do+not+have+access+to+that+event')
+  }
+
+  const { error } = await supabase
+    .from('events')
+    .update({ confirmation_acknowledged: true })
+    .eq('id', eventId)
+    .eq('planner_id', plannerId)
+
+  if (error) {
+    redirect(`/confirm/${eventId}?error=${encodeURIComponent(error.message)}`)
+  }
+
+  redirect(next || `/planners/${plannerId}`)
 }

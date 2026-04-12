@@ -2,10 +2,11 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createServerClient } from '@/lib/supabase/server'
 import { deleteEvent } from '@/app/events/actions'
+import ConfirmSubmitButton from '@/components/ConfirmSubmitButton'
 
 interface Props {
   params: Promise<{ plannerId: string; eventId: string }>
-  searchParams: Promise<{ error?: string }>
+  searchParams: Promise<{ error?: string; next?: string }>
 }
 
 function formatDateTime(iso: string) {
@@ -21,7 +22,7 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
   if (!user) redirect('/')
 
   const { plannerId, eventId } = await params
-  const { error } = await searchParams
+  const { error, next } = await searchParams
 
   const { data: membership } = await supabase
     .from('planner_members')
@@ -48,18 +49,19 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
     .single()
 
   const canEdit = membership.role === 'owner' || membership.role === 'editor'
+  const backHref = next ?? `/planners/${plannerId}`
 
   return (
     <div className="min-h-svh bg-stone-50">
       <header className="border-b border-stone-200 bg-white px-4 py-3">
         <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
-          <Link href={`/planners/${plannerId}`} className="text-sm text-stone-500 hover:text-stone-900">
+          <Link href={backHref} className="text-sm text-stone-500 hover:text-stone-900">
             &larr; {planner?.name ?? 'Planner'}
           </Link>
           {canEdit && (
             <div className="flex items-center gap-2">
               <Link
-                href={`/planners/${plannerId}/events/${eventId}/edit`}
+                href={`/planners/${plannerId}/events/${eventId}/edit${next ? `?next=${encodeURIComponent(next)}` : ''}`}
                 className="rounded-lg border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-50"
               >
                 Edit
@@ -150,15 +152,13 @@ export default async function EventDetailPage({ params, searchParams }: Props) {
             <form action={deleteEvent}>
               <input type="hidden" name="event_id" value={eventId} />
               <input type="hidden" name="planner_id" value={plannerId} />
-              <button
-                type="submit"
+              <input type="hidden" name="next" value={backHref} />
+              <ConfirmSubmitButton
+                confirmMessage="Delete this event? This cannot be undone."
                 className="rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50"
-                onClick={(e) => {
-                  if (!confirm('Delete this event? This cannot be undone.')) e.preventDefault()
-                }}
               >
                 Delete event
-              </button>
+              </ConfirmSubmitButton>
             </form>
           </div>
         )}

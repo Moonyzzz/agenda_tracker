@@ -2,16 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase/server'
-import { createClient } from '@supabase/supabase-js'
-import { sendEmail, inviteEmailHtml } from '@/lib/email'
-
-function serviceRoleClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  )
-}
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export async function inviteMember(formData: FormData) {
   const supabase = await createServerClient()
@@ -39,39 +30,51 @@ export async function inviteMember(formData: FormData) {
     redirect(`/planners/${plannerId}/members?error=Only+owners+can+invite+members`)
   }
 
-  const { data: planner } = await supabase
-    .from('planners')
-    .select('name')
-    .eq('id', plannerId)
-    .single()
+  const admin = createAdminClient()
+  const { data: authUsers } = await admin.auth.admin.listUsers()
+  const matchingUser = authUsers?.users.find((candidate) => candidate.email?.toLowerCase() === email)
 
-  // Create invite token (use service role to bypass RLS insert check on email uniqueness)
-  const admin = serviceRoleClient()
-  const { data: invite, error } = await admin
+  if (matchingUser) {
+    const { data: currentMember } = await supabase
+      .from('planner_members')
+      .select('id')
+      .eq('planner_id', plannerId)
+      .eq('user_id', matchingUser.id)
+      .single()
+
+    if (currentMember) {
+      redirect(`/planners/${plannerId}/members?error=${encodeURIComponent(`${email} is already a member`)}`)
+    }
+  }
+
+  const { data: existingInvite } = await supabase
+    .from('planner_invites')
+    .select('id')
+    .eq('planner_id', plannerId)
+    .eq('email', email)
+    .eq('status', 'pending')
+    .gt('expires_at', new Date().toISOString())
+    .maybeSingle()
+
+  if (existingInvite) {
+    redirect(`/planners/${plannerId}/members?error=${encodeURIComponent(`A pending invite already exists for ${email}`)}`)
+  }
+
+  const { error } = await supabase
     .from('planner_invites')
     .insert({
       planner_id: plannerId,
       email,
       role,
       invited_by: user.id,
+      status: 'pending',
     })
-    .select('token')
-    .single()
 
-  if (error || !invite) {
+  if (error) {
     redirect(`/planners/${plannerId}/members?error=${encodeURIComponent(error?.message ?? 'Failed to create invite')}`)
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-  const inviteUrl = `${appUrl}/invite/${invite.token}`
-
-  await sendEmail({
-    to: email,
-    subject: `You've been invited to "${planner?.name ?? 'a planner'}"`,
-    html: inviteEmailHtml(planner?.name ?? 'a planner', user.email ?? '', inviteUrl, role),
-  })
-
-  redirect(`/planners/${plannerId}/members?success=Invite+sent+to+${encodeURIComponent(email)}`)
+  redirect(`/planners/${plannerId}/members?success=${encodeURIComponent(`Invite created for ${email}${matchingUser ? '' : `. It will appear after they sign up.`}`)}`)
 }
 
 export async function changeRole(formData: FormData) {
@@ -153,50 +156,163 @@ export async function removeMember(formData: FormData) {
   redirect(`/planners/${plannerId}/members`)
 }
 
-export async function acceptInvite(token: string) {
-  const supabase = await createServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'not_authenticated' }
+async function resolveInviteForUser(inviteId: string, userId: string, userEmail: string) {
+  const admin = createAdminClient()
 
-  const admin = serviceRoleClient()
-
-  // Look up invite
-  const { data: invite, error: lookupError } = await admin
+  const { data: invite, error } = await admin
     .from('planner_invites')
     .select('*')
-    .eq('token', token)
+    .eq('id', inviteId)
     .single()
 
-  if (lookupError || !invite) return { error: 'invalid_token' }
-  if (invite.accepted_at) return { error: 'already_used' }
+  if (error || !invite) return { error: 'invalid_invite' }
+  if (invite.status !== 'pending') return { error: invite.status }
   if (new Date(invite.expires_at) < new Date()) return { error: 'expired' }
+  if (invite.email.toLowerCase() !== userEmail.toLowerCase()) return { error: 'email_mismatch' }
 
-  // Check if already a member
   const { data: existing } = await admin
     .from('planner_members')
     .select('id')
     .eq('planner_id', invite.planner_id)
+    .eq('user_id', userId)
+    .single()
+
+  return { admin, invite, existing }
+}
+
+export async function acceptInviteAction(formData: FormData) {
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) redirect('/auth/login')
+
+  const inviteId = formData.get('invite_id') as string
+  const result = await resolveInviteForUser(inviteId, user.id, user.email)
+
+  if ('error' in result) {
+    redirect(`/dashboard?error=${encodeURIComponent('Could not accept invite')}`)
+  }
+
+  if (!result.existing) {
+    const { error: memberError } = await result.admin
+      .from('planner_members')
+      .insert({
+        planner_id: result.invite.planner_id,
+        user_id: user.id,
+        role: result.invite.role,
+        invited_by: result.invite.invited_by,
+      })
+
+    if (memberError) {
+      redirect(`/dashboard?error=${encodeURIComponent(memberError.message)}`)
+    }
+  }
+
+  const now = new Date().toISOString()
+  const { error: updateError } = await result.admin
+    .from('planner_invites')
+    .update({ status: 'accepted', accepted_at: now, responded_at: now })
+    .eq('id', result.invite.id)
+
+  if (updateError) {
+    redirect(`/dashboard?error=${encodeURIComponent(updateError.message)}`)
+  }
+
+  redirect(`/planners/${result.invite.planner_id}`)
+}
+
+export async function declineInviteAction(formData: FormData) {
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) redirect('/auth/login')
+
+  const inviteId = formData.get('invite_id') as string
+  const result = await resolveInviteForUser(inviteId, user.id, user.email)
+
+  if ('error' in result) {
+    redirect(`/dashboard?error=${encodeURIComponent('Could not decline invite')}`)
+  }
+
+  const now = new Date().toISOString()
+  const { error } = await result.admin
+    .from('planner_invites')
+    .update({ status: 'declined', responded_at: now })
+    .eq('id', result.invite.id)
+
+  if (error) {
+    redirect(`/dashboard?error=${encodeURIComponent(error.message)}`)
+  }
+
+  redirect('/dashboard?success=Invite+declined')
+}
+
+export async function revokeInviteAction(formData: FormData) {
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) redirect('/auth/login')
+
+  const plannerId = formData.get('planner_id') as string
+  const inviteId = formData.get('invite_id') as string
+
+  const { data: membership } = await supabase
+    .from('planner_members')
+    .select('role')
+    .eq('planner_id', plannerId)
     .eq('user_id', user.id)
     .single()
 
-  if (!existing) {
-    const { error: memberError } = await admin
+  if (!membership || membership.role !== 'owner') {
+    redirect(`/planners/${plannerId}/members?error=Only+owners+can+revoke+invites`)
+  }
+
+  const admin = createAdminClient()
+  const now = new Date().toISOString()
+  const { error } = await admin
+    .from('planner_invites')
+    .update({ status: 'revoked', responded_at: now })
+    .eq('id', inviteId)
+    .eq('planner_id', plannerId)
+
+  if (error) {
+    redirect(`/planners/${plannerId}/members?error=${encodeURIComponent(error.message)}`)
+  }
+
+  redirect(`/planners/${plannerId}/members?success=Invite+revoked`)
+}
+
+export async function acceptInvite(token: string) {
+  const supabase = await createServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user?.email) return { error: 'not_authenticated' }
+
+  const admin = createAdminClient()
+  const { data: invite, error } = await admin
+    .from('planner_invites')
+    .select('id')
+    .eq('token', token)
+    .single()
+
+  if (error || !invite) return { error: 'invalid_token' }
+
+  const result = await resolveInviteForUser(invite.id, user.id, user.email)
+  if ('error' in result) return { error: result.error }
+
+  if (!result.existing) {
+    const { error: memberError } = await result.admin
       .from('planner_members')
       .insert({
-        planner_id: invite.planner_id,
+        planner_id: result.invite.planner_id,
         user_id: user.id,
-        role: invite.role,
-        invited_by: invite.invited_by,
+        role: result.invite.role,
+        invited_by: result.invite.invited_by,
       })
-
     if (memberError) return { error: memberError.message }
   }
 
-  // Mark invite as accepted
-  await admin
+  const now = new Date().toISOString()
+  await result.admin
     .from('planner_invites')
-    .update({ accepted_at: new Date().toISOString() })
-    .eq('id', invite.id)
+    .update({ status: 'accepted', accepted_at: now, responded_at: now })
+    .eq('id', result.invite.id)
 
-  return { plannerId: invite.planner_id }
+  return { plannerId: result.invite.planner_id }
 }

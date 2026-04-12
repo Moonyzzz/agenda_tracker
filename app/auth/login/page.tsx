@@ -2,12 +2,12 @@ import Link from 'next/link'
 import { signIn, signInWithMagicLink } from '@/app/auth/actions'
 
 interface Props {
-  searchParams: Promise<{ error?: string; success?: string }>
+  searchParams: Promise<{ error?: string; success?: string; next?: string }>
 }
 
 export default async function LoginPage({ searchParams }: Props) {
   const params = await searchParams
-  const { error, success } = params
+  const { error, success, next } = params
 
   return (
     <div className="min-h-svh flex items-center justify-center bg-stone-50 px-4 py-12">
@@ -35,6 +35,7 @@ export default async function LoginPage({ searchParams }: Props) {
         {/* Email/password form */}
         <div className="rounded-2xl border border-stone-200 bg-white px-6 py-8 shadow-sm">
           <form action={signIn} className="space-y-4">
+            <input type="hidden" name="next" value={next ?? '/dashboard'} />
             <div>
               <label
                 htmlFor="email"
@@ -85,6 +86,7 @@ export default async function LoginPage({ searchParams }: Props) {
 
           {/* Magic link form */}
           <form action={signInWithMagicLink} className="space-y-4">
+            <input type="hidden" name="next" value={next ?? '/dashboard'} />
             <div>
               <label
                 htmlFor="magic-email"

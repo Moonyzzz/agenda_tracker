@@ -1,16 +1,9 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createServerClient } from '@/lib/supabase/server'
-import { createClient } from '@supabase/supabase-js'
-import { inviteMember, removeMember, changeRole } from '@/app/members/actions'
-
-function serviceRoleClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  )
-}
+import { createAdminClient } from '@/lib/supabase/admin'
+import { inviteMember, removeMember, changeRole, revokeInviteAction } from '@/app/members/actions'
+import ConfirmSubmitButton from '@/components/ConfirmSubmitButton'
 
 interface Props {
   params: Promise<{ plannerId: string }>
@@ -48,21 +41,19 @@ export default async function MembersPage({ params, searchParams }: Props) {
     .eq('planner_id', plannerId)
     .order('joined_at', { ascending: true })
 
-  // Fetch emails from auth.users using service role
-  const admin = serviceRoleClient()
+  const admin = createAdminClient()
   const emailMap = new Map<string, string>()
-  for (const m of members ?? []) {
-    const { data: { user: authUser } } = await admin.auth.admin.getUserById(m.user_id)
+  for (const member of members ?? []) {
+    const { data: { user: authUser } } = await admin.auth.admin.getUserById(member.user_id)
     if (authUser?.email) emailMap.set(authUser.id, authUser.email)
   }
 
-  // Fetch pending invites (owners only)
   const { data: invites } = isOwner
     ? await supabase
         .from('planner_invites')
-        .select('id, email, role, created_at, expires_at, accepted_at')
+        .select('id, email, role, created_at, expires_at, status')
         .eq('planner_id', plannerId)
-        .is('accepted_at', null)
+        .eq('status', 'pending')
         .gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false })
     : { data: [] }
@@ -85,29 +76,28 @@ export default async function MembersPage({ params, searchParams }: Props) {
           <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">{success}</div>
         )}
 
-        {/* Members list */}
         <div>
-          <h1 className="text-xl font-semibold text-stone-900 mb-4">Members</h1>
-          <div className="rounded-xl border border-stone-200 bg-white divide-y divide-stone-100">
-            {(members ?? []).map((m) => (
-              <div key={m.id} className="flex items-center justify-between px-4 py-3">
+          <h1 className="mb-4 text-xl font-semibold text-stone-900">Members</h1>
+          <div className="divide-y divide-stone-100 rounded-xl border border-stone-200 bg-white">
+            {(members ?? []).map((member) => (
+              <div key={member.id} className="flex items-center justify-between px-4 py-3">
                 <div>
                   <p className="text-sm font-medium text-stone-900">
-                    {emailMap.get(m.user_id) ?? m.user_id.slice(0, 8) + '…'}
-                    {m.user_id === user.id && (
+                    {emailMap.get(member.user_id) ?? `${member.user_id.slice(0, 8)}...`}
+                    {member.user_id === user.id && (
                       <span className="ml-2 text-xs font-normal text-stone-400">(you)</span>
                     )}
                   </p>
-                  <p className="text-xs text-stone-500 capitalize">{m.role}</p>
+                  <p className="text-xs capitalize text-stone-500">{member.role}</p>
                 </div>
-                {isOwner && m.user_id !== user.id && m.role !== 'owner' && (
+                {isOwner && member.user_id !== user.id && member.role !== 'owner' && (
                   <div className="flex items-center gap-3">
                     <form action={changeRole} className="flex items-center gap-1.5">
                       <input type="hidden" name="planner_id" value={plannerId} />
-                      <input type="hidden" name="user_id" value={m.user_id} />
+                      <input type="hidden" name="user_id" value={member.user_id} />
                       <select
                         name="role"
-                        defaultValue={m.role}
+                        defaultValue={member.role}
                         className="rounded border border-stone-200 bg-white px-2 py-1 text-xs text-stone-700 focus:outline-none focus:ring-1 focus:ring-stone-400"
                       >
                         <option value="editor">Editor</option>
@@ -115,23 +105,20 @@ export default async function MembersPage({ params, searchParams }: Props) {
                       </select>
                       <button
                         type="submit"
-                        className="text-xs text-stone-500 hover:text-stone-800 transition-colors"
+                        className="text-xs text-stone-500 transition-colors hover:text-stone-800"
                       >
                         Save
                       </button>
                     </form>
                     <form action={removeMember}>
                       <input type="hidden" name="planner_id" value={plannerId} />
-                      <input type="hidden" name="user_id" value={m.user_id} />
-                      <button
-                        type="submit"
-                        className="text-xs text-red-500 hover:text-red-700 transition-colors"
-                        onClick={(e) => {
-                          if (!confirm('Remove this member?')) e.preventDefault()
-                        }}
+                      <input type="hidden" name="user_id" value={member.user_id} />
+                      <ConfirmSubmitButton
+                        confirmMessage="Remove this member?"
+                        className="text-xs text-red-500 transition-colors hover:text-red-700"
                       >
                         Remove
-                      </button>
+                      </ConfirmSubmitButton>
                     </form>
                   </div>
                 )}
@@ -140,28 +127,38 @@ export default async function MembersPage({ params, searchParams }: Props) {
           </div>
         </div>
 
-        {/* Pending invites */}
         {isOwner && invites && invites.length > 0 && (
           <div>
-            <h2 className="text-sm font-semibold text-stone-700 mb-3">Pending invites</h2>
-            <div className="rounded-xl border border-stone-200 bg-white divide-y divide-stone-100">
-              {invites.map((inv) => (
-                <div key={inv.id} className="flex items-center justify-between px-4 py-3">
+            <h2 className="mb-3 text-sm font-semibold text-stone-700">Pending invites</h2>
+            <div className="divide-y divide-stone-100 rounded-xl border border-stone-200 bg-white">
+              {invites.map((invite) => (
+                <div key={invite.id} className="flex items-center justify-between px-4 py-3">
                   <div>
-                    <p className="text-sm text-stone-900">{inv.email}</p>
-                    <p className="text-xs text-stone-500 capitalize">{inv.role} · expires {new Date(inv.expires_at).toLocaleDateString()}</p>
+                    <p className="text-sm text-stone-900">{invite.email}</p>
+                    <p className="text-xs capitalize text-stone-500">
+                      {invite.role} · expires {new Date(invite.expires_at).toLocaleDateString()}
+                    </p>
                   </div>
+                  <form action={revokeInviteAction}>
+                    <input type="hidden" name="planner_id" value={plannerId} />
+                    <input type="hidden" name="invite_id" value={invite.id} />
+                    <button
+                      type="submit"
+                      className="text-xs text-red-500 transition-colors hover:text-red-700"
+                    >
+                      Revoke
+                    </button>
+                  </form>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* Invite form */}
         {isOwner && (
           <div>
-            <h2 className="text-sm font-semibold text-stone-700 mb-3">Invite someone</h2>
-            <form action={inviteMember} className="rounded-xl border border-stone-200 bg-white p-4 space-y-4">
+            <h2 className="mb-3 text-sm font-semibold text-stone-700">Invite someone</h2>
+            <form action={inviteMember} className="space-y-4 rounded-xl border border-stone-200 bg-white p-4">
               <input type="hidden" name="planner_id" value={plannerId} />
               <div>
                 <label htmlFor="email" className="block text-sm font-medium text-stone-700">
@@ -185,15 +182,18 @@ export default async function MembersPage({ params, searchParams }: Props) {
                   name="role"
                   className="mt-1 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-stone-900 focus:border-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-500"
                 >
-                  <option value="editor">Editor — can create and edit events</option>
-                  <option value="observer">Observer — can view only</option>
+                  <option value="editor">Editor - can create and edit events</option>
+                  <option value="observer">Observer - can view only</option>
                 </select>
               </div>
+              <p className="text-xs text-stone-400">
+                Invites appear on the recipient&apos;s dashboard after they sign in with this email.
+              </p>
               <button
                 type="submit"
                 className="rounded-lg bg-stone-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-stone-700"
               >
-                Send invite
+                Create invite
               </button>
             </form>
           </div>

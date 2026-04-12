@@ -26,6 +26,7 @@ interface Props {
   submitLabel: string
   cancelHref: string
   error?: string
+  next?: string
 }
 
 function toDatetimeLocal(iso?: string): string {
@@ -41,6 +42,7 @@ export default function EventForm({
   submitLabel,
   cancelHref,
   error,
+  next,
 }: Props) {
   const [recurrenceType, setRecurrenceType] = useState(defaults.recurrence_type ?? 'none')
   const [reminderEnabled, setReminderEnabled] = useState(defaults.reminder_enabled ?? false)
@@ -57,6 +59,7 @@ export default function EventForm({
     <form action={action} className="space-y-6">
       <input type="hidden" name="planner_id" value={plannerId} />
       {eventId && <input type="hidden" name="event_id" value={eventId} />}
+      {next && <input type="hidden" name="next" value={next} />}
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -112,12 +115,13 @@ export default function EventForm({
         </div>
         <div>
           <label htmlFor="end_time" className="block text-sm font-medium text-stone-700">
-            End
+            End <span className="text-red-500">*</span>
           </label>
           <input
             id="end_time"
             name="end_time"
             type="datetime-local"
+            required
             defaultValue={toDatetimeLocal(defaults.end_time ?? undefined)}
             className="mt-1 block w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-sm text-stone-900 focus:border-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-500"
           />

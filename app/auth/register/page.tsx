@@ -2,12 +2,12 @@ import Link from 'next/link'
 import { signUp } from '@/app/auth/actions'
 
 interface Props {
-  searchParams: Promise<{ error?: string; success?: string }>
+  searchParams: Promise<{ error?: string; success?: string; next?: string }>
 }
 
 export default async function RegisterPage({ searchParams }: Props) {
   const params = await searchParams
-  const { error, success } = params
+  const { error, success, next } = params
 
   return (
     <div className="min-h-svh flex items-center justify-center bg-stone-50 px-4 py-12">
@@ -34,6 +34,7 @@ export default async function RegisterPage({ searchParams }: Props) {
 
         <div className="rounded-2xl border border-stone-200 bg-white px-6 py-8 shadow-sm">
           <form action={signUp} className="space-y-4">
+            <input type="hidden" name="next" value={next ?? '/dashboard'} />
             <div>
               <label
                 htmlFor="email"

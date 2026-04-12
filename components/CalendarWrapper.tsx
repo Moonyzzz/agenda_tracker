@@ -14,7 +14,7 @@ const CalendarView = dynamic(() => import('./CalendarView'), {
 })
 
 interface Props {
-  plannerId: string
+  plannerId?: string
   events: CalendarEvent[]
   dayColor: string
   bgColor: string

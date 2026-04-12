@@ -18,7 +18,7 @@ export async function GET(
 
   const { data: invite, error } = await admin
     .from('planner_invites')
-    .select('email, role, expires_at, accepted_at, planners(name)')
+    .select('email, role, expires_at, accepted_at, status, planners(name)')
     .eq('token', token)
     .single()
 
@@ -26,12 +26,16 @@ export async function GET(
     return NextResponse.json({ error: 'Invalid token' }, { status: 404 })
   }
 
-  if (invite.accepted_at) {
+  if (invite.status === 'accepted' || invite.accepted_at) {
     return NextResponse.json({ error: 'Already accepted' }, { status: 410 })
   }
 
   if (new Date(invite.expires_at) < new Date()) {
     return NextResponse.json({ error: 'Expired' }, { status: 410 })
+  }
+
+  if (invite.status === 'declined' || invite.status === 'revoked') {
+    return NextResponse.json({ error: 'Unavailable' }, { status: 410 })
   }
 
   return NextResponse.json({

@@ -3,6 +3,8 @@
 import { redirect } from 'next/navigation'
 import { createServerClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { finalizePollIfNeeded } from '@/lib/polls'
+import { parseEventFormData } from '@/lib/events'
 
 export async function createPoll(formData: FormData) {
   const supabase = await createServerClient()
@@ -10,6 +12,10 @@ export async function createPoll(formData: FormData) {
   if (!user) redirect('/auth/login')
 
   const plannerId = formData.get('planner_id') as string
+  const parsed = parseEventFormData(formData)
+  if ('error' in parsed) {
+    redirect(`/planners/${plannerId}/polls/new?error=${encodeURIComponent(parsed.error)}`)
+  }
 
   const { data: membership } = await supabase
     .from('planner_members')
@@ -23,18 +29,13 @@ export async function createPoll(formData: FormData) {
   }
 
   const eventData = {
-    name: (formData.get('name') as string)?.trim(),
-    description: (formData.get('description') as string) || null,
-    start_time: formData.get('start_time') as string,
-    end_time: (formData.get('end_time') as string) || null,
-    participants: (formData.get('participants') as string)
-      ?.split(',').map((s) => s.trim()).filter(Boolean) ?? [],
-    agenda: (formData.get('agenda') as string) || null,
-    notes: (formData.get('notes') as string) || null,
-  }
-
-  if (!eventData.name) {
-    redirect(`/planners/${plannerId}/polls/new?error=Name+is+required`)
+    name: parsed.name,
+    description: parsed.description,
+    start_time: parsed.startTime,
+    end_time: parsed.endTime,
+    participants: parsed.participants,
+    agenda: parsed.agenda,
+    notes: parsed.notes,
   }
 
   const threshold = Number(formData.get('approval_threshold')) || 1
@@ -69,46 +70,18 @@ export async function castVote(formData: FormData) {
   const plannerId = formData.get('planner_id') as string
   const vote = formData.get('vote') as string
 
-  // Upsert vote
-  await supabase
+  const { error: voteError } = await supabase
     .from('poll_votes')
     .upsert({ poll_id: pollId, user_id: user.id, vote }, { onConflict: 'poll_id,user_id' })
+  if (voteError) {
+    revalidatePath(`/planners/${plannerId}/polls/${pollId}`)
+    redirect(`/planners/${plannerId}/polls/${pollId}?error=${encodeURIComponent(voteError.message)}`)
+  }
 
-  // Check threshold
-  const { data: poll } = await supabase
-    .from('polls')
-    .select('approval_threshold, status, event_data, planner_id')
-    .eq('id', pollId)
-    .single()
-
-  if (poll && poll.status === 'open') {
-    const { count: approveCount } = await supabase
-      .from('poll_votes')
-      .select('*', { count: 'exact', head: true })
-      .eq('poll_id', pollId)
-      .eq('vote', 'approve')
-
-    if ((approveCount ?? 0) >= poll.approval_threshold) {
-      // Auto-create event
-      const ed = poll.event_data as Record<string, unknown>
-      await supabase.from('events').insert({
-        planner_id: poll.planner_id,
-        created_by: user.id,
-        name: ed.name,
-        description: ed.description ?? null,
-        start_time: ed.start_time,
-        end_time: ed.end_time ?? null,
-        participants: ed.participants ?? [],
-        agenda: ed.agenda ?? null,
-        notes: ed.notes ?? null,
-        recurrence_type: 'none',
-      })
-
-      await supabase
-        .from('polls')
-        .update({ status: 'approved' })
-        .eq('id', pollId)
-    }
+  const finalize = await finalizePollIfNeeded(supabase, pollId, user.id)
+  if (finalize.error) {
+    revalidatePath(`/planners/${plannerId}/polls/${pollId}`)
+    redirect(`/planners/${plannerId}/polls/${pollId}?error=${encodeURIComponent(finalize.error)}`)
   }
 
   revalidatePath(`/planners/${plannerId}/polls/${pollId}`)
@@ -126,13 +99,16 @@ export async function createSuggestion(formData: FormData) {
 
   if (!fieldName || !suggestedValue) return
 
-  await supabase.from('poll_suggestions').insert({
+  const { error } = await supabase.from('poll_suggestions').insert({
     poll_id: pollId,
     suggested_by: user.id,
     field_name: fieldName,
     suggested_value: suggestedValue,
     status: 'open',
   })
+  if (error) {
+    redirect(`/planners/${plannerId}/polls/${pollId}?error=${encodeURIComponent(error.message)}`)
+  }
 
   revalidatePath(`/planners/${plannerId}/polls/${pollId}`)
 }
@@ -147,9 +123,12 @@ export async function voteSuggestion(formData: FormData) {
   const plannerId = formData.get('planner_id') as string
   const vote = formData.get('vote') as string
 
-  await supabase
+  const { error: voteError } = await supabase
     .from('suggestion_votes')
     .upsert({ suggestion_id: suggestionId, user_id: user.id, vote }, { onConflict: 'suggestion_id,user_id' })
+  if (voteError) {
+    redirect(`/planners/${plannerId}/polls/${pollId}?error=${encodeURIComponent(voteError.message)}`)
+  }
 
   // Check if majority approved (>50% of all planner members who voted)
   const { count: totalMembers } = await supabase
@@ -172,10 +151,13 @@ export async function voteSuggestion(formData: FormData) {
 
     if (suggestion) {
       // Mark suggestion accepted and update poll event_data
-      await supabase
+      const { error: suggestionError } = await supabase
         .from('poll_suggestions')
         .update({ status: 'accepted' })
         .eq('id', suggestionId)
+      if (suggestionError) {
+        redirect(`/planners/${plannerId}/polls/${pollId}?error=${encodeURIComponent(suggestionError.message)}`)
+      }
 
       const { data: poll } = await supabase
         .from('polls')
@@ -185,7 +167,10 @@ export async function voteSuggestion(formData: FormData) {
 
       if (poll) {
         const updated = { ...(poll.event_data as Record<string, unknown>), [suggestion.field_name]: suggestion.suggested_value }
-        await supabase.from('polls').update({ event_data: updated }).eq('id', suggestion.poll_id)
+        const { error: pollError } = await supabase.from('polls').update({ event_data: updated }).eq('id', suggestion.poll_id)
+        if (pollError) {
+          redirect(`/planners/${plannerId}/polls/${pollId}?error=${encodeURIComponent(pollError.message)}`)
+        }
       }
     }
   }

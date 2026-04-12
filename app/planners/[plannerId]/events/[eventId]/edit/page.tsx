@@ -6,7 +6,7 @@ import EventForm from '@/components/EventForm'
 
 interface Props {
   params: Promise<{ plannerId: string; eventId: string }>
-  searchParams: Promise<{ error?: string }>
+  searchParams: Promise<{ error?: string; next?: string }>
 }
 
 export default async function EditEventPage({ params, searchParams }: Props) {
@@ -15,7 +15,7 @@ export default async function EditEventPage({ params, searchParams }: Props) {
   if (!user) redirect('/')
 
   const { plannerId, eventId } = await params
-  const { error } = await searchParams
+  const { error, next } = await searchParams
 
   const { data: membership } = await supabase
     .from('planner_members')
@@ -41,12 +41,14 @@ export default async function EditEventPage({ params, searchParams }: Props) {
     .eq('id', plannerId)
     .single()
 
+  const cancelHref = next ?? `/planners/${plannerId}/events/${eventId}`
+
   return (
     <div className="min-h-svh bg-stone-50">
       <header className="border-b border-stone-200 bg-white px-4 py-3">
         <div className="mx-auto flex max-w-2xl items-center gap-3">
           <Link
-            href={`/planners/${plannerId}/events/${eventId}`}
+            href={cancelHref}
             className="text-sm text-stone-500 hover:text-stone-900"
           >
             &larr; {planner?.name ?? 'Planner'}
@@ -76,8 +78,9 @@ export default async function EditEventPage({ params, searchParams }: Props) {
           }}
           action={updateEvent}
           submitLabel="Save changes"
-          cancelHref={`/planners/${plannerId}/events/${eventId}`}
+          cancelHref={cancelHref}
           error={error}
+          next={next}
         />
       </main>
     </div>

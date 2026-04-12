@@ -12,13 +12,17 @@ export interface CalendarEvent {
   title: string
   start: string
   end?: string
+  plannerId?: string
+  returnTo?: string
   backgroundColor?: string
+  borderColor?: string
+  classNames?: string[]
   rrule?: string
   duration?: string
 }
 
 interface Props {
-  plannerId: string
+  plannerId?: string
   events: CalendarEvent[]
   dayColor: string
   bgColor: string
@@ -45,7 +49,13 @@ export default function CalendarView({ plannerId, events, dayColor, bgColor }: P
         events={events}
         eventClick={(info) => {
           info.jsEvent.preventDefault()
-          router.push(`/planners/${plannerId}/events/${info.event.id}`)
+          const eventPlannerId = info.event.extendedProps.plannerId ?? plannerId
+          const returnTo = info.event.extendedProps.returnTo as string | undefined
+          if (eventPlannerId) {
+            router.push(
+              `/planners/${eventPlannerId}/events/${info.event.id}${returnTo ? `?next=${encodeURIComponent(returnTo)}` : ''}`
+            )
+          }
         }}
         eventColor={dayColor}
         height="auto"

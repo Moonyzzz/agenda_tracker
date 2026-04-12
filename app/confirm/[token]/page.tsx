@@ -1,17 +1,20 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createServerClient } from '@/lib/supabase/server'
+import { acknowledgeEventAction } from '@/app/events/actions'
 
 interface Props {
   params: Promise<{ token: string }>
+  searchParams: Promise<{ error?: string }>
 }
 
-export default async function ConfirmPage({ params }: Props) {
+export default async function ConfirmPage({ params, searchParams }: Props) {
   const { token: eventId } = await params
+  const { error } = await searchParams
 
   const supabase = await createServerClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect(`/auth/login?redirect=/confirm/${eventId}`)
+  if (!user) redirect(`/auth/login?next=/confirm/${eventId}`)
 
   const { data: event } = await supabase
     .from('events')
@@ -84,6 +87,12 @@ export default async function ConfirmPage({ params }: Props) {
           </div>
         )}
 
+        {error && (
+          <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
         {event.confirmation_acknowledged ? (
           <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-center text-sm text-green-700">
             You&apos;ve already confirmed this event. See you there!
@@ -98,7 +107,6 @@ export default async function ConfirmPage({ params }: Props) {
   )
 }
 
-// Inline form component to handle the acknowledge action
 function AcknowledgeForm({
   eventId,
   plannerId,
@@ -108,19 +116,11 @@ function AcknowledgeForm({
   plannerId: string
   canEdit: boolean
 }) {
-  async function acknowledge() {
-    'use server'
-    const supabase = await createServerClient()
-    await supabase
-      .from('events')
-      .update({ confirmation_acknowledged: true })
-      .eq('id', eventId)
-    redirect(`/planners/${plannerId}`)
-  }
-
   return (
     <>
-      <form action={acknowledge}>
+      <form action={acknowledgeEventAction}>
+        <input type="hidden" name="event_id" value={eventId} />
+        <input type="hidden" name="planner_id" value={plannerId} />
         <button
           type="submit"
           className="w-full rounded-xl bg-stone-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-stone-700"

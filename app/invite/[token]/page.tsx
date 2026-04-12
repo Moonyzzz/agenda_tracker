@@ -17,7 +17,7 @@ async function getInviteDetails(token: string) {
 
   const { data } = await admin
     .from('planner_invites')
-    .select('email, role, expires_at, accepted_at, planners(name)')
+    .select('email, role, expires_at, accepted_at, status, planners(name)')
     .eq('token', token)
     .single()
 
@@ -43,7 +43,7 @@ export default async function InvitePage({ params }: Props) {
     )
   }
 
-  if (invite.accepted_at) {
+  if (invite.status === 'accepted' || invite.accepted_at) {
     return (
       <div className="min-h-svh flex items-center justify-center bg-stone-50 px-4">
         <div className="text-center">
@@ -61,6 +61,18 @@ export default async function InvitePage({ params }: Props) {
         <div className="text-center">
           <h1 className="text-xl font-semibold text-stone-900">Invite expired</h1>
           <p className="mt-2 text-sm text-stone-500">Ask the planner owner to send a new invite.</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (invite.status === 'declined' || invite.status === 'revoked') {
+    return (
+      <div className="min-h-svh flex items-center justify-center bg-stone-50 px-4">
+        <div className="text-center">
+          <h1 className="text-xl font-semibold text-stone-900">Invite unavailable</h1>
+          <p className="mt-2 text-sm text-stone-500">This invite is no longer active.</p>
+          <Link href="/dashboard" className="mt-4 inline-block text-sm text-stone-700 underline">Go to dashboard</Link>
         </div>
       </div>
     )
